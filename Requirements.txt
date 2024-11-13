@@ -1,0 +1,10 @@
+jupyterlab==4.2.3
+lxt==0.6.0
+matplotlib==3.9.2
+numpy==2.0.2
+pip==24.2
+shap==0.46.0
+inseq==0.6.0
+torch==2.3.1
+transformers==4.46.1
+datasets==3.1.0
