@@ -47,19 +47,17 @@ class Comparison():
         
         max_logits.backward(max_logits)
         relevance = input_embeds.grad.float().sum(-1).cpu()[0]
+        prova = relevance
         
         # remove '_' characters from token strings
         tokens = self.tokenizer.convert_ids_to_tokens(input_ids[0])
 
-        # idxs_to_keep = list(set(range(len(tokens))) - set(np.where(np.array(tokens) == "Ġ")[0]))
         tokens = np.array(tokens)#[idxs_to_keep]
         
         # Drop the "▁" token
-        relevance = relevance#[idxs_to_keep]
-        # normalize relevance between [-1, 1] for plotting
         relevance = relevance / relevance.abs().max()
         
-        return tokens, relevance.numpy()
+        return tokens, relevance.numpy()#, prova
 
     def _get_tokens(self, output):
         tokens = [token.token for token in output.sequence_attributions[0].source]
@@ -73,27 +71,25 @@ class Comparison():
         explainer = shap.Explainer(model, tokenizer)
         shap_values = explainer([prompt])
 
-        print(shap_values)
-        relevance = shap_values.values.sum(1)[0] + shap_values.base_values[0]
+        relevance = shap_values.values[0, :, 0]
         relevance = th.from_numpy(relevance)
         relevance /= relevance.abs().max() 
 
-        return relevance
+        return relevance.numpy()
 
-    def _get_attributions(self, prompt, target, generation_args, attribution_type):
+    def _get_attributions(self, prompt, generation_args, attribution_type):
         model  = inseq.load_model("gpt2", attribution_type)
         out    = model.attribute(input_texts=prompt, generation_args=generation_args)
 
         tokens = self._get_tokens(out)
         
-        # relevance = out.aggregate().sequence_attributions[0].target_attributions[idx]
-        relevance = out.aggregate().sequence_attributions[0].target_attributions[:, 0]
+        relevance = out.aggregate("mean").sequence_attributions[0].target_attributions[:, 0]
         relevance = relevance[ (1 - relevance.isnan().int()).bool()]
         relevance /= relevance.abs().max() 
         
-        return np.array(tokens), relevance.numpy()
+        return np.array(tokens), relevance.numpy()#, out
 
-    def __call__(self, prompt, target, generation_args):        
+    def __call__(self, prompt, generation_args):        
         # AttnLRP
         Attn_tokens, Attn_relevance             = self._AttnLRP(prompt)
         
@@ -101,19 +97,19 @@ class Comparison():
         Shap_tokens, Shap_relevance             = Attn_tokens, self._Shap(prompt)
         
         # Integrated Gradients
-        Integrated_tokens, Integrated_relevance = self._get_attributions(prompt, target, generation_args, "integrated_gradients")
+        Integrated_tokens, Integrated_relevance = self._get_attributions(prompt, generation_args, "integrated_gradients")
 
         # Gradient X Input
-        Gradient_tokens, Gradient_relevance     = self._get_attributions(prompt, target, generation_args, "input_x_gradient")
+        Gradient_tokens, Gradient_relevance     = self._get_attributions(prompt, generation_args, "input_x_gradient")
         
         # DeepLift
-        DeepLift_tokens, DeepLift_relevance     = self._get_attributions(prompt, target, generation_args, "deeplift")
+        DeepLift_tokens, DeepLift_relevance     = self._get_attributions(prompt, generation_args, "deeplift")
         
         # Lime
-        Lime_tokens, Lime_relevance             = self._get_attributions(prompt, target, generation_args, "lime")
+        Lime_tokens, Lime_relevance             = self._get_attributions(prompt, generation_args, "lime")
 
         # Gradient_Shap
-        Gradient_Shap_tokens, Gradient_Shap_relevance = self._get_attributions(prompt, target, generation_args, "gradient_shap")
+        Gradient_Shap_tokens, Gradient_Shap_relevance = self._get_attributions(prompt, generation_args, "gradient_shap")
 
         output = self._get_output(prompt)
         
@@ -159,8 +155,11 @@ class Comparison():
             rgb = self._apply_colormap(relevance)
             r, g, b = int(rgb[0]*255), int(rgb[1]*255), int(rgb[2]*255)
 
-            word = word.replace("Ġ", "").replace("Ċ", "\\\\")
-            latex_code += f' \\colorbox[RGB]{{{r},{g},{b}}}{{\\strut {word}}}'
+            if word == "Ċ":
+                latex_code += "\\\\"
+            else:
+                word = word.replace("Ġ", "").replace("$", "\\$").replace("&", "\\&").replace("%", "\\%")
+                latex_code += f' \\colorbox[RGB]{{{r},{g},{b}}}{{\\strut {word}}}'
     
     
         latex_code += r'}}\end{document}'
@@ -178,4 +177,4 @@ class Comparison():
 
     def to_pdf(self, dictionary, name=""):
         self.to_latex(dictionary, name)
-        subprocess.Popen("./compile.sh", shell=True)
+        subprocess.Popen("./compile.sh", shell=True, stdout=subprocess.DEVNULL)
